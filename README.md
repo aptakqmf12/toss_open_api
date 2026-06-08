@@ -16,7 +16,7 @@ npm run dev
 
 ## 실제 계좌 연동
 
-1. **토스증권 개발자 포털**(https://developers.tossinvest.com/docs)에서 앱을 등록하고
+1. **토스증권 개발자 포털**(https://corp.tossinvest.com/ko/open-api)에서 앱을 등록하고
    `client_id` / `client_secret`을 발급받습니다.
 2. `.env.local`을 채웁니다:
 
