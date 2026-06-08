@@ -2,7 +2,8 @@ version: 0.2
 phases:
   install:
     commands:
-      - n 20
+      - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+      - yum install -y nodejs
       - node --version
   build:
     commands:
