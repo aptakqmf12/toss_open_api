@@ -1,15 +1,15 @@
 version: 0.2
 phases:
   install:
-    commands:
-      # CodeBuild 는 각 command 를 독립된 셸에서 실행하므로(상태 미공유),
-      # nvm 로드~사용을 한 줄로 체이닝해야 한다. nodesource yum 설치는
-      # AL2023 베이스 AMI 에서 실패하므로 nvm 으로 Node 22 를 설치.
-      - export NVM_DIR="$HOME/.nvm" && curl -fsSL -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash && . "$NVM_DIR/nvm.sh" && nvm install 22 && nvm alias default 22 && node --version && npm --version
+    # AL2023 표준 이미지(aws/codebuild/amazonlinux-x86_64-standard:5.0)의
+    # 런타임 매니저로 Node 20 선택. (Next 16 은 Node 20.9+ 필요)
+    runtime-versions:
+      nodejs: 20
   build:
     commands:
-      # build 페이즈도 동일하게 한 줄에서 nvm 로드 후 빌드.
-      - export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && nvm use 22 && npm ci && npm run build
+      - node --version
+      - npm ci
+      - npm run build
 artifacts:
   files:
     - '**/*'
