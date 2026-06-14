@@ -16,6 +16,8 @@ export default function Home() {
   const [data, setData] = useState<PortfolioSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // 표시 통화 (원화/달러 토글). null 이면 환산 대상 통화(원화) 우선.
+  const [displayCurrency, setDisplayCurrency] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -36,6 +38,13 @@ export default function Home() {
     load();
   }, [load]);
 
+  // 기준 통화(계좌 통화) → 표시 통화 환산.
+  // 기본값은 환산 대상 통화(보통 원화)이며, 토글로 계좌 통화 원본도 볼 수 있다.
+  const base = data?.currency ?? "KRW";
+  const cur = displayCurrency ?? data?.exchangeRate?.quote ?? base;
+  const rate = data?.exchangeRate && cur !== base ? data.exchangeRate.rate : 1;
+  const conv = (v: number) => v * rate;
+
   return (
     <main className="min-h-screen bg-gray-950 text-gray-100 p-6 md:p-10">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -46,15 +55,33 @@ export default function Home() {
             {data && (
               <p className="text-sm text-gray-400 mt-1">
                 계좌 {data.accountNo}
-                {data.isMock && (
-                  <span className="ml-2 px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-xs">
-                    MOCK 데이터
+                {data.exchangeRate && cur !== base && (
+                  <span className="ml-2 text-gray-500">
+                    적용환율 1 {base} = {data.exchangeRate.rate.toLocaleString("ko-KR")}{" "}
+                    {data.exchangeRate.quote} · 기준 {formatDateTime(data.exchangeRate.asOf)}
                   </span>
                 )}
               </p>
             )}
           </div>
           <div className="flex items-center gap-3">
+            {data?.exchangeRate && (
+              <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+                {[data.exchangeRate.quote, data.currency].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setDisplayCurrency(c)}
+                    className={`px-3 py-1.5 font-medium transition ${
+                      cur === c
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-800 text-gray-400 hover:text-gray-200"
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            )}
             {data && (
               <span className="text-xs text-gray-500">
                 갱신 {formatDateTime(data.updatedAt)}
@@ -86,29 +113,29 @@ export default function Home() {
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <SummaryCard
                 label="총 평가금액"
-                value={formatCurrency(data.totalMarketValue, data.currency)}
+                value={formatCurrency(conv(data.totalMarketValue), cur)}
               />
               <SummaryCard
                 label="총 평가손익"
-                value={formatSignedCurrency(data.totalProfitLoss, data.currency)}
+                value={formatSignedCurrency(conv(data.totalProfitLoss), cur)}
                 sub={formatPercent(data.totalProfitLossRate)}
                 color={profitColor(data.totalProfitLoss)}
               />
               <SummaryCard
                 label="당일 손익"
-                value={formatSignedCurrency(data.dailyProfitLoss, data.currency)}
+                value={formatSignedCurrency(conv(data.dailyProfitLoss), cur)}
                 color={profitColor(data.dailyProfitLoss)}
               />
               <SummaryCard
                 label="총 매입금액"
-                value={formatCurrency(data.totalPurchaseAmount, data.currency)}
+                value={formatCurrency(conv(data.totalPurchaseAmount), cur)}
               />
             </section>
 
             {/* 자산 배분 */}
             <section className="rounded-2xl border border-gray-800 bg-gray-900 p-6">
               <h2 className="text-lg font-semibold mb-2">자산 배분</h2>
-              <AllocationChart items={data.items} currency={data.currency} />
+              <AllocationChart items={data.items} currency={cur} rate={rate} />
             </section>
 
             {/* 보유 종목 테이블 */}
@@ -139,11 +166,11 @@ export default function Home() {
                         <div className="text-xs text-gray-500">{it.symbol}</div>
                       </td>
                       <td>{formatNumber(it.quantity)}</td>
-                      <td>{formatCurrency(it.averagePurchasePrice, it.currency)}</td>
-                      <td>{formatCurrency(it.lastPrice, it.currency)}</td>
-                      <td>{formatCurrency(it.marketValue, it.currency)}</td>
+                      <td>{formatCurrency(conv(it.averagePurchasePrice), cur)}</td>
+                      <td>{formatCurrency(conv(it.lastPrice), cur)}</td>
+                      <td>{formatCurrency(conv(it.marketValue), cur)}</td>
                       <td className={profitColor(it.profitLoss)}>
-                        <div>{formatSignedCurrency(it.profitLoss, it.currency)}</div>
+                        <div>{formatSignedCurrency(conv(it.profitLoss), cur)}</div>
                         <div className="text-xs">{formatPercent(it.profitLossRate)}</div>
                       </td>
                       <td className="text-gray-300">{it.weight.toFixed(1)}%</td>

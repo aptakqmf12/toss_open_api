@@ -12,9 +12,12 @@ const COLORS = [
 export default function AllocationChart({
   items,
   currency,
+  rate = 1,
 }: {
   items: HoldingItem[];
   currency: string;
+  /** 기준 통화 → 표시 통화 환산 배수 (툴팁 금액에 적용; 비중은 불변) */
+  rate?: number;
 }) {
   const data = items
     .map((i) => ({ name: i.name, value: i.marketValue, weight: i.weight }))
@@ -40,7 +43,7 @@ export default function AllocationChart({
           </Pie>
           <Tooltip
             formatter={(value, _name, item) => {
-              const v = typeof value === "number" ? value : Number(value);
+              const v = (typeof value === "number" ? value : Number(value)) * rate;
               const weight = (item?.payload as { weight?: number })?.weight ?? 0;
               return [
                 `${formatCurrency(v, currency)} (${formatPercent(weight).replace("+", "")})`,

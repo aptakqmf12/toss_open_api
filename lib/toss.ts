@@ -1,6 +1,5 @@
 import "server-only";
-import type { PortfolioSummary, HoldingItem } from "./types";
-import { buildMockPortfolio } from "./mock";
+import type { PortfolioSummary, HoldingItem, ExchangeRate } from "./types";
 
 // ─────────────────────────────────────────────────────────────
 // 토스증권 Open API 연동 레이어 (서버 전용)
@@ -9,13 +8,14 @@ import { buildMockPortfolio } from "./mock";
 //   POST {BASE}/oauth2/token  (application/x-www-form-urlencoded)
 //   body: grant_type=client_credentials & client_id & client_secret
 //
-// 계좌:    GET {BASE}/api/v1/accounts        -> accountSeq 획득
+// 계좌:    GET {BASE}/api/v1/accounts        -> accountSeq 획득 ({ result: [...] })
 // 보유현황: GET {BASE}/api/v1/holdings        (header: X-Tossinvest-Account: {accountSeq})
 //
-// ⚠️ 실제 JSON 응답 필드명/중첩 구조는 자격증명 발급 후
-//    https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
-//    으로 최종 확인이 필요하다. 아래 파서는 문서 요약 기준의 추정 구조이며,
-//    실데이터 확인 시 normalizeHoldings()만 손보면 된다.
+// 응답 구조는 공식 OpenAPI 스펙 기준으로 맞췄다.
+//   https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
+// 금액 필드는 단일 숫자가 아니라 통화별 객체({ krw, usd })로 내려오며,
+// 일부는 { amount: { krw, usd } } 처럼 한 단계 더 중첩된다. money() 헬퍼가
+// 숫자 / { amount } / { krw, usd } 형태를 모두 흡수한다.
 // ─────────────────────────────────────────────────────────────
 
 const BASE_URL = process.env.TOSS_API_BASE_URL ?? "https://openapi.tossinvest.com";
@@ -31,6 +31,12 @@ export class TossApiError extends Error {
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 async function getAccessToken(): Promise<string> {
+  // 이미 발급받은 access_token 을 직접 주입한 경우 그대로 사용.
+  // (client_secret 없이 빠르게 실데이터를 확인할 때 유용. 단, 만료되면 직접 갱신 필요)
+  if (process.env.TOSS_ACCESS_TOKEN) {
+    return process.env.TOSS_ACCESS_TOKEN;
+  }
+
   const now = Date.now();
   // 만료 30초 전까지는 재사용 (rate limit 보호)
   if (cachedToken && cachedToken.expiresAt - 30_000 > now) {
@@ -74,7 +80,7 @@ async function getAccessToken(): Promise<string> {
 
 async function authedFetch(
   path: string,
-  init?: RequestInit & { accountSeq?: string },
+  init?: RequestInit & { accountSeq?: string | number },
 ): Promise<unknown> {
   const token = await getAccessToken();
   const headers: Record<string, string> = {
@@ -82,7 +88,8 @@ async function authedFetch(
     Accept: "application/json",
     ...(init?.headers as Record<string, string> | undefined),
   };
-  if (init?.accountSeq) headers["X-Tossinvest-Account"] = init.accountSeq;
+  if (init?.accountSeq != null)
+    headers["X-Tossinvest-Account"] = String(init.accountSeq);
 
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
@@ -111,42 +118,114 @@ async function safeJson(res: Response): Promise<unknown> {
 // ── 계좌 목록 ────────────────────────────────────────────────
 interface RawAccount {
   accountNo: string;
-  accountSeq: string;
+  accountSeq: string | number;
   accountType: string;
 }
 
 async function getAccounts(): Promise<RawAccount[]> {
   const data = (await authedFetch("/api/v1/accounts")) as
-    | { accounts?: RawAccount[] }
+    | { result?: RawAccount[]; accounts?: RawAccount[] }
     | RawAccount[];
-  // 응답이 배열 자체일 수도, { accounts: [...] } 형태일 수도 있어 양쪽 처리
-  const list = Array.isArray(data) ? data : data.accounts ?? [];
+  // 스펙상 { result: [...] } 형태. 방어적으로 배열 / { accounts } 도 허용.
+  const list = Array.isArray(data) ? data : data.result ?? data.accounts ?? [];
   if (list.length === 0) throw new TossApiError("조회된 계좌가 없습니다.");
   return list;
 }
 
-// ── 보유 현황 원시 응답 (추정 구조) ──────────────────────────
+// ── 보유 현황 원시 응답 (실응답 기준) ────────────────────────
+// 모든 금액은 문자열("322.39")로 내려온다. rate 는 소수(-0.0086 = -0.86%).
+// 합계 금액은 통화별 버킷({ krw, usd })으로 나뉘며, 단일 통화 계좌는 반대쪽이 "0".
+// 종목 레벨 금액은 해당 종목 통화 기준의 단일 스칼라다.
+type Money = string | number | null | undefined;
+type CurrencyAmount = { krw?: Money; usd?: Money };
+type Cur = "KRW" | "USD";
+
 interface RawHoldingItem {
-  symbol?: string;
-  stockCode?: string;
-  name?: string;
-  stockName?: string;
-  quantity: number;
-  averagePurchasePrice: number;
-  lastPrice: number;
+  symbol: string;
+  name: string;
+  marketCountry?: string;
   currency?: string;
+  quantity?: Money;
+  lastPrice?: Money;
+  averagePurchasePrice?: Money;
+  marketValue?: { purchaseAmount?: Money; amount?: Money; amountAfterCost?: Money };
+  profitLoss?: { amount?: Money; rate?: Money; rateAfterCost?: Money };
+  dailyProfitLoss?: { amount?: Money; rate?: Money };
+  cost?: unknown;
 }
 interface RawHoldings {
-  totalPurchaseAmount: number;
-  marketValue: { amount: number };
-  profitLoss: { amount: number; rate: number };
-  dailyProfitLoss: number | { amount: number };
-  currency?: string;
+  totalPurchaseAmount: CurrencyAmount;
+  marketValue: { amount: CurrencyAmount; amountAfterCost?: CurrencyAmount };
+  profitLoss: { amount: CurrencyAmount; rate?: Money; rateAfterCost?: Money };
+  dailyProfitLoss: { amount: CurrencyAmount; rate?: Money };
   items: RawHoldingItem[];
 }
 
-async function getHoldings(accountSeq: string): Promise<RawHoldings> {
-  return (await authedFetch("/api/v1/holdings", { accountSeq })) as RawHoldings;
+async function getHoldings(accountSeq: string | number): Promise<RawHoldings> {
+  const data = (await authedFetch("/api/v1/holdings", { accountSeq })) as
+    | { result?: RawHoldings }
+    | RawHoldings;
+  return (data && "result" in data && data.result ? data.result : data) as RawHoldings;
+}
+
+// ── 환율 조회 ────────────────────────────────────────────────
+// GET /api/v1/exchange-rate?baseCurrency=USD&quoteCurrency=KRW
+//   -> { result: { rate: "1520.3", validFrom, validUntil, ... } }
+// rate limit 그룹이 MARKET_INFO 라 과호출 시 429. validUntil(없으면 60초)까지 캐시.
+interface RawExchangeRate {
+  baseCurrency?: string;
+  quoteCurrency?: string;
+  rate?: Money;
+  midRate?: Money;
+  validFrom?: string;
+  validUntil?: string;
+}
+const fxCache = new Map<string, { rate: number; asOf: string; expiresAt: number }>();
+
+async function getExchangeRate(base: Cur, quote: Cur): Promise<ExchangeRate | undefined> {
+  if (base === quote) return undefined;
+  const key = `${base}-${quote}`;
+  const now = Date.now();
+  const hit = fxCache.get(key);
+  if (hit && hit.expiresAt > now) {
+    return { base, quote, rate: hit.rate, asOf: hit.asOf };
+  }
+  try {
+    const data = (await authedFetch(
+      `/api/v1/exchange-rate?baseCurrency=${base}&quoteCurrency=${quote}`,
+    )) as { result?: RawExchangeRate } | RawExchangeRate;
+    const r = (data && "result" in data && data.result ? data.result : data) as RawExchangeRate;
+    const rate = num(r.rate);
+    if (rate <= 0) return undefined;
+    const asOf = r.validFrom ?? new Date().toISOString();
+    const expiresAt = r.validUntil ? Date.parse(r.validUntil) : now + 60_000;
+    fxCache.set(key, { rate, asOf, expiresAt });
+    return { base, quote, rate, asOf };
+  } catch {
+    // 환율 조회 실패해도 포트폴리오 자체는 그대로 보여준다 (토글만 비활성).
+    return undefined;
+  }
+}
+
+// 숫자 / 숫자형 문자열("325.19") 을 숫자로. 파싱 불가 시 0.
+function num(v: Money): number {
+  if (v == null) return 0;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// 통화 버킷({ krw, usd })에서 표시 통화 값 추출.
+function pick(a: CurrencyAmount | undefined, cur: Cur): number {
+  if (!a) return 0;
+  return num(cur === "USD" ? a.usd : a.krw);
+}
+
+// 표시(기준) 통화 결정: 평가금액이 잡히는 통화를 사용하고 KRW 를 우선한다.
+// 단일 통화 계좌면 반대 통화 버킷이 "0" 이므로 값이 있는 쪽을 고른다.
+function detectCurrency(raw: RawHoldings): Cur {
+  if (pick(raw.marketValue?.amount, "KRW") !== 0) return "KRW";
+  if (pick(raw.marketValue?.amount, "USD") !== 0) return "USD";
+  return raw.items?.[0]?.currency === "USD" ? "USD" : "KRW";
 }
 
 // ── 원시 → 정규화 ────────────────────────────────────────────
@@ -154,20 +233,32 @@ function normalizeHoldings(
   account: RawAccount,
   raw: RawHoldings,
 ): PortfolioSummary {
-  const totalMarketValue = raw.marketValue.amount;
-  const currency = raw.currency ?? "KRW";
+  const currency = detectCurrency(raw);
+  const totalMarketValue = pick(raw.marketValue?.amount, currency);
 
   const items: HoldingItem[] = (raw.items ?? []).map((r) => {
-    const quantity = r.quantity;
-    const averagePurchasePrice = r.averagePurchasePrice;
-    const lastPrice = r.lastPrice;
-    const marketValue = lastPrice * quantity;
-    const purchaseAmount = averagePurchasePrice * quantity;
-    const profitLoss = marketValue - purchaseAmount;
-    const profitLossRate = purchaseAmount === 0 ? 0 : (profitLoss / purchaseAmount) * 100;
+    const quantity = num(r.quantity);
+    const averagePurchasePrice = num(r.averagePurchasePrice);
+    const lastPrice = num(r.lastPrice);
+    // 평가/매입금액: API 값이 있으면 신뢰, 없으면 수량×단가로 계산.
+    const marketValue =
+      r.marketValue?.amount != null ? num(r.marketValue.amount) : lastPrice * quantity;
+    const purchaseAmount =
+      r.marketValue?.purchaseAmount != null
+        ? num(r.marketValue.purchaseAmount)
+        : averagePurchasePrice * quantity;
+    const profitLoss =
+      r.profitLoss?.amount != null ? num(r.profitLoss.amount) : marketValue - purchaseAmount;
+    // rate 는 소수(-0.0086) → % 로 변환. 없으면 직접 계산.
+    const profitLossRate =
+      r.profitLoss?.rate != null
+        ? num(r.profitLoss.rate) * 100
+        : purchaseAmount === 0
+          ? 0
+          : (profitLoss / purchaseAmount) * 100;
     return {
-      symbol: r.symbol ?? r.stockCode ?? "",
-      name: r.name ?? r.stockName ?? r.symbol ?? r.stockCode ?? "",
+      symbol: r.symbol ?? "",
+      name: r.name ?? r.symbol ?? "",
       quantity,
       averagePurchasePrice,
       lastPrice,
@@ -180,22 +271,16 @@ function normalizeHoldings(
     };
   });
 
-  const dailyProfitLoss =
-    typeof raw.dailyProfitLoss === "number"
-      ? raw.dailyProfitLoss
-      : raw.dailyProfitLoss?.amount ?? 0;
-
   return {
     accountNo: maskAccountNo(account.accountNo),
     totalMarketValue,
-    totalPurchaseAmount: raw.totalPurchaseAmount,
-    totalProfitLoss: raw.profitLoss.amount,
-    totalProfitLossRate: raw.profitLoss.rate,
-    dailyProfitLoss,
+    totalPurchaseAmount: pick(raw.totalPurchaseAmount, currency),
+    totalProfitLoss: pick(raw.profitLoss?.amount, currency),
+    totalProfitLossRate: num(raw.profitLoss?.rate) * 100,
+    dailyProfitLoss: pick(raw.dailyProfitLoss?.amount, currency),
     currency,
     items,
     updatedAt: new Date().toISOString(),
-    isMock: false,
   };
 }
 
@@ -206,15 +291,19 @@ function maskAccountNo(accountNo: string): string {
 
 // ── 공개 진입점 ──────────────────────────────────────────────
 export async function getPortfolio(): Promise<PortfolioSummary> {
-  if (process.env.TOSS_USE_MOCK === "true") {
-    return buildMockPortfolio();
-  }
-
   const accounts = await getAccounts();
   const preferred = process.env.TOSS_ACCOUNT_SEQ;
   const account =
-    (preferred && accounts.find((a) => a.accountSeq === preferred)) || accounts[0];
+    (preferred && accounts.find((a) => String(a.accountSeq) === preferred)) || accounts[0];
 
   const raw = await getHoldings(account.accountSeq);
-  return normalizeHoldings(account, raw);
+  const summary = normalizeHoldings(account, raw);
+
+  // 기준 통화(계좌 통화)의 반대 통화 환율을 붙여 클라이언트의 원화/달러 토글을 지원.
+  const base = summary.currency as Cur;
+  const quote: Cur = base === "USD" ? "KRW" : "USD";
+  const fx = await getExchangeRate(base, quote);
+  if (fx) summary.exchangeRate = fx;
+
+  return summary;
 }

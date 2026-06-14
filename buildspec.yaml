@@ -2,11 +2,21 @@ version: 0.2
 phases:
   install:
     commands:
-      - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-      - yum install -y nodejs
+      # 베이스 AMI 이미지(amazonlinux-base)에는 Node 가 없고, nodesource yum 설치가
+      # AL2023 에서 실패하므로 nvm 으로 Node 22 를 설치한다.
+      - export NVM_DIR="$HOME/.nvm"
+      - curl -fsSL -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+      - . "$NVM_DIR/nvm.sh"
+      - nvm install 22
+      - nvm use 22
       - node --version
+      - npm --version
   build:
     commands:
+      # build 페이즈는 새 셸이라 nvm 을 다시 로드한다.
+      - export NVM_DIR="$HOME/.nvm"
+      - . "$NVM_DIR/nvm.sh"
+      - nvm use 22
       - npm ci
       - npm run build
 artifacts:

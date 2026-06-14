@@ -26,6 +26,17 @@ export interface HoldingItem {
   currency: string;
 }
 
+export interface ExchangeRate {
+  /** 기준 통화 (계좌 통화) */
+  base: string;
+  /** 환산 대상 통화 */
+  quote: string;
+  /** 1 base = rate quote */
+  rate: number;
+  /** 환율 기준 시각 (ISO) */
+  asOf: string;
+}
+
 export interface PortfolioSummary {
   /** 계좌번호 (마스킹된 표시용) */
   accountNo: string;
@@ -45,6 +56,6 @@ export interface PortfolioSummary {
   items: HoldingItem[];
   /** 데이터 갱신 시각 (ISO) */
   updatedAt: string;
-  /** mock 데이터 여부 */
-  isMock: boolean;
+  /** 기준 통화 → 반대 통화 환율. 통화 토글(원화/달러)에 사용. 조회 실패 시 없음. */
+  exchangeRate?: ExchangeRate;
 }
