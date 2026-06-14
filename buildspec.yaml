@@ -10,15 +10,14 @@ phases:
       - node --version
       - npm ci
       - npm run build
+      # standalone 번들에는 정적 자산이 포함되지 않으므로 직접 복사한다.
+      - cp -r public .next/standalone/public
+      - cp -r .next/static .next/standalone/.next/static
+      # EB 가 server.js 로 기동하도록 Procfile 추가.
+      - printf 'web: node server.js\n' > .next/standalone/Procfile
 artifacts:
+  # 아티팩트 루트를 standalone 디렉터리로 지정 → server.js 가 루트에 위치.
+  # 자기완결 번들이라 .bin 심링크 문제 없이 EB 에서 바로 구동된다.
+  base-directory: .next/standalone
   files:
     - '**/*'
-  exclude-paths:
-    # node_modules 를 zip 에 넣으면 .bin/* 심볼릭 링크가 깨져 EB 에서
-    # "Cannot find module '../server/require-hook'" 로 기동 실패한다.
-    # 따라서 빌드 산출물(.next)만 올리고 의존성은 EB 가 인스턴스에서 재설치한다.
-    - .git/**
-    - node_modules/**
-    - .next/cache/**
-    # yarn.lock 이 함께 있으면 EB 가 yarn 설치를 시도할 수 있어 제외 (npm 사용 강제)
-    - yarn.lock
