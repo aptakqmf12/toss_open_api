@@ -13,8 +13,8 @@ phases:
       # standalone 번들에는 정적 자산이 포함되지 않으므로 직접 복사한다.
       - cp -r public .next/standalone/public
       - cp -r .next/static .next/standalone/.next/static
-      # EB 가 server.js 로 기동하도록 Procfile 추가.
-      - printf 'web: node server.js\n' > .next/standalone/Procfile
+      # EB 가 server.js 로 기동하도록 repo 의 Procfile 을 번들 루트로 복사.
+      - cp Procfile .next/standalone/Procfile
 artifacts:
   # 아티팩트 루트를 standalone 디렉터리로 지정 → server.js 가 루트에 위치.
   # 자기완결 번들이라 .bin 심링크 문제 없이 EB 에서 바로 구동된다.
