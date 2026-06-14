@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { getPortfolio, TossApiError } from "@/lib/toss";
+import { isAuthed } from "@/lib/auth";
 
 // 매 요청마다 최신 데이터를 받아오도록 캐시 비활성화
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // 비밀번호 인증 없이는 계좌 데이터를 절대 내려주지 않는다 (서버 측 강제).
+  if (!(await isAuthed())) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   try {
     const portfolio = await getPortfolio();
     return NextResponse.json(portfolio);
