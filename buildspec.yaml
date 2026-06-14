@@ -14,4 +14,11 @@ artifacts:
   files:
     - '**/*'
   exclude-paths:
+    # node_modules 를 zip 에 넣으면 .bin/* 심볼릭 링크가 깨져 EB 에서
+    # "Cannot find module '../server/require-hook'" 로 기동 실패한다.
+    # 따라서 빌드 산출물(.next)만 올리고 의존성은 EB 가 인스턴스에서 재설치한다.
     - .git/**
+    - node_modules/**
+    - .next/cache/**
+    # yarn.lock 이 함께 있으면 EB 가 yarn 설치를 시도할 수 있어 제외 (npm 사용 강제)
+    - yarn.lock
