@@ -59,3 +59,35 @@ export interface PortfolioSummary {
   /** 기준 통화 → 반대 통화 환율. 통화 토글(원화/달러)에 사용. 조회 실패 시 없음. */
   exchangeRate?: ExchangeRate;
 }
+
+// ── 매수 주문 관련 ───────────────────────────────────────────
+
+/** 주문 전 거래 가능 정보 (정규화) */
+export interface OrderInfo {
+  symbol: string;
+  side: "BUY";
+  /** 현재가 */
+  lastPrice: number;
+  /** 주문가능금액(현금 기반) */
+  buyableAmount: number;
+  /** 수수료율 (있으면) */
+  commissionRate?: number;
+  /** 통화 (KRW / USD) */
+  currency: string;
+}
+
+/** 클라이언트 → 서버 매수 요청 (가격/금액은 서버가 결정) */
+export interface BuyOrderRequest {
+  symbol: string;
+  quantity: number;
+}
+
+/** 매수 주문 전송 결과 */
+export interface OrderResult {
+  orderId: string;
+  clientOrderId: string;
+  symbol: string;
+  quantity: number;
+  /** 전송 시점 예상 체결금 */
+  estimatedAmount: number;
+}
