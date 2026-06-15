@@ -1,6 +1,8 @@
 // 매수 주문의 순수 검증/정규화 로직. fetch 없음 → 모킹 없이 테스트 가능.
 import type { OrderInfo, BuyOrderRequest } from "./types";
 
+// MAX_ORDER_AMOUNT 미설정 시 적용하는 의도적으로 보수적인 1회 한도(계좌 통화 기준).
+// 실계좌 운용 시에는 환경변수로 적절히 올려 설정한다. fail-safe 목적의 안전 기본값.
 export const DEFAULT_MAX_ORDER_AMOUNT = 100_000;
 
 export class OrderValidationError extends Error {
@@ -20,12 +22,13 @@ function toNumber(v: Money): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// 스칼라 | { amount } | { krw, usd } 형태를 모두 흡수해 통화별 값 추출.
+// 스칼라 | { amount } | { amount: { krw, usd } } | { krw, usd } 형태를 모두 흡수해
+// 통화별 값 추출. amount 는 한 단계 더 중첩될 수 있어 재귀로 푼다.
 function pickAmount(v: unknown, currency: string): number {
   if (v == null) return 0;
   if (typeof v === "number" || typeof v === "string") return toNumber(v);
-  const obj = v as CurrencyAmount & { amount?: Money };
-  if (obj.amount != null) return toNumber(obj.amount);
+  const obj = v as CurrencyAmount & { amount?: unknown };
+  if (obj.amount != null) return pickAmount(obj.amount, currency);
   return toNumber(currency === "USD" ? obj.usd : obj.krw);
 }
 

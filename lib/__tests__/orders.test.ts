@@ -19,9 +19,9 @@ describe("parseBuyOrderInput", () => {
     expect(() => parseBuyOrderInput({ quantity: 1 })).toThrow(OrderValidationError);
   });
   it("수량이 0 이하/정수아님이면 throw", () => {
-    expect(() => parseBuyOrderInput({ symbol: "A", quantity: 0 })).toThrow();
-    expect(() => parseBuyOrderInput({ symbol: "A", quantity: 1.5 })).toThrow();
-    expect(() => parseBuyOrderInput({ symbol: "A", quantity: -2 })).toThrow();
+    expect(() => parseBuyOrderInput({ symbol: "A", quantity: 0 })).toThrow(OrderValidationError);
+    expect(() => parseBuyOrderInput({ symbol: "A", quantity: 1.5 })).toThrow(OrderValidationError);
+    expect(() => parseBuyOrderInput({ symbol: "A", quantity: -2 })).toThrow(OrderValidationError);
   });
   it("null 입력도 안전하게 throw", () => {
     expect(() => parseBuyOrderInput(null)).toThrow(OrderValidationError);
@@ -78,6 +78,13 @@ describe("normalizeOrderInfo", () => {
       commissionRate: 0.00015,
       currency: "KRW",
     });
+  });
+  it("{ amount: { krw, usd } } 중첩 버킷도 흡수한다", () => {
+    const r = normalizeOrderInfo(
+      { lastPrice: "80000", buyableAmount: { amount: { krw: "1000000", usd: "0" } }, currency: "KRW" },
+      "005930",
+    );
+    expect(r.buyableAmount).toBe(1000000);
   });
   it("{result} 래핑과 통화버킷을 흡수한다", () => {
     const r = normalizeOrderInfo(
