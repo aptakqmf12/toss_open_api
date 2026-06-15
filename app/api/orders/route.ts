@@ -32,6 +32,8 @@ export async function POST(req: Request) {
     const info = await getOrderInfo(parsed.symbol);
 
     // 4) 한도·주문가능금액 검증 (클라이언트 값 신뢰 안 함)
+    // 시장가 주문이라 실제 체결가는 lastPrice 와 다를 수 있다. estimatedAmount/한도는
+    // 스냅샷 가격 기준의 근사치이며 계약값이 아니다. (UI 확인 단계에서도 사용자에게 고지)
     const check = checkBuyLimits({
       lastPrice: info.lastPrice,
       quantity: parsed.quantity,
