@@ -1,5 +1,6 @@
 import "server-only";
-import type { PortfolioSummary, HoldingItem, ExchangeRate } from "./types";
+import type { PortfolioSummary, HoldingItem, ExchangeRate, OrderInfo } from "./types";
+import { normalizeOrderInfo } from "./orders";
 
 // ─────────────────────────────────────────────────────────────
 // 토스증권 Open API 연동 레이어 (서버 전용)
@@ -130,6 +131,15 @@ async function getAccounts(): Promise<RawAccount[]> {
   const list = Array.isArray(data) ? data : data.result ?? data.accounts ?? [];
   if (list.length === 0) throw new TossApiError("조회된 계좌가 없습니다.");
   return list;
+}
+
+// 사용할 계좌 선택: TOSS_ACCOUNT_SEQ 우선, 없으면 첫 계좌.
+function resolveAccount(accounts: RawAccount[]): RawAccount {
+  const preferred = process.env.TOSS_ACCOUNT_SEQ;
+  return (
+    (preferred && accounts.find((a) => String(a.accountSeq) === preferred)) ||
+    accounts[0]
+  );
 }
 
 // ── 보유 현황 원시 응답 (실응답 기준) ────────────────────────
@@ -289,12 +299,49 @@ function maskAccountNo(accountNo: string): string {
   return accountNo.slice(0, 4) + "*".repeat(accountNo.length - 4);
 }
 
+// ── 주문 전 조회 ─────────────────────────────────────────────
+export async function getOrderInfo(symbol: string): Promise<OrderInfo> {
+  const accounts = await getAccounts();
+  const account = resolveAccount(accounts);
+  const data = await authedFetch(
+    `/api/v1/order-info?symbol=${encodeURIComponent(symbol)}&side=BUY`,
+    { accountSeq: account.accountSeq },
+  );
+  return normalizeOrderInfo(data, symbol);
+  // ⚠️ probe 결과 order-info 에 현재가가 없으면 holdings 의 lastPrice 로 보강한다.
+}
+
+// ── 시장가 매수 주문 전송 ────────────────────────────────────
+export async function placeBuyOrder(req: {
+  symbol: string;
+  quantity: number;
+  clientOrderId: string;
+}): Promise<{ orderId: string; clientOrderId: string }> {
+  const accounts = await getAccounts();
+  const account = resolveAccount(accounts);
+  const data = (await authedFetch("/api/v1/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientOrderId: req.clientOrderId,
+      symbol: req.symbol,
+      side: "BUY",
+      orderType: "MARKET",
+      quantity: String(req.quantity), // 토스 금액/수량 필드는 문자열
+    }),
+    accountSeq: account.accountSeq,
+  })) as { result?: { orderId: string; clientOrderId?: string } } | { orderId: string };
+
+  const result = (data && "result" in data && data.result
+    ? data.result
+    : data) as { orderId: string; clientOrderId?: string };
+  return { orderId: result.orderId, clientOrderId: result.clientOrderId ?? req.clientOrderId };
+}
+
 // ── 공개 진입점 ──────────────────────────────────────────────
 export async function getPortfolio(): Promise<PortfolioSummary> {
   const accounts = await getAccounts();
-  const preferred = process.env.TOSS_ACCOUNT_SEQ;
-  const account =
-    (preferred && accounts.find((a) => String(a.accountSeq) === preferred)) || accounts[0];
+  const account = resolveAccount(accounts);
 
   const raw = await getHoldings(account.accountSeq);
   const summary = normalizeHoldings(account, raw);
