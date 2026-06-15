@@ -13,7 +13,6 @@ export class OrderValidationError extends Error {
 }
 
 type Money = string | number | null | undefined;
-type CurrencyAmount = { krw?: Money; usd?: Money };
 
 // 숫자/숫자형 문자열 → 숫자. 파싱 불가 시 0. (lib/toss.ts num() 과 동일 규칙)
 function toNumber(v: Money): number {
@@ -22,14 +21,12 @@ function toNumber(v: Money): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// 스칼라 | { amount } | { amount: { krw, usd } } | { krw, usd } 형태를 모두 흡수해
-// 통화별 값 추출. amount 는 한 단계 더 중첩될 수 있어 재귀로 푼다.
-function pickAmount(v: unknown, currency: string): number {
-  if (v == null) return 0;
-  if (typeof v === "number" || typeof v === "string") return toNumber(v);
-  const obj = v as CurrencyAmount & { amount?: unknown };
-  if (obj.amount != null) return pickAmount(obj.amount, currency);
-  return toNumber(currency === "USD" ? obj.usd : obj.krw);
+// 토스 성공 응답은 { result: ... } envelope. result 가 있으면 벗겨낸다.
+function unwrap(raw: unknown): Record<string, unknown> {
+  const data = (raw ?? {}) as Record<string, unknown>;
+  return (data && "result" in data && data.result
+    ? data.result
+    : data) as Record<string, unknown>;
 }
 
 // 클라이언트 매수 요청 검증. 가격/금액은 받지 않는다(서버가 결정).
@@ -80,18 +77,31 @@ export function getMaxOrderAmount(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_ORDER_AMOUNT;
 }
 
-// 토스 order-info 원시 응답 → OrderInfo.
-// ⚠️ probe 결과로 실제 필드명이 다르면 이 함수만 고치면 된다.
-export function normalizeOrderInfo(raw: unknown, symbol: string): OrderInfo {
-  const data = raw as Record<string, unknown>;
-  const r = (data && "result" in data && data.result ? data.result : data) as Record<string, unknown>;
-  const currency = typeof r.currency === "string" ? r.currency : "KRW";
+// 토스에는 단일 order-info 엔드포인트가 없다. 시장가 매수 기준가는 호가(orderbook),
+// 매수가능금액은 buying-power 에서 따로 받아 OrderInfo 로 합친다. (순수 함수 → 테스트 가능)
+//   orderbook  : { result: { currency, asks:[{price,volume}], bids:[{price,volume}] } }
+//   buyingPower: { result: { currency, cashBuyingPower } }
+// 시장가 매수 체결 기준가는 최우선 매도호가(asks[0]); 없으면 최우선 매수호가(bids[0]).
+export function buildOrderInfo(params: {
+  symbol: string;
+  orderbook: unknown;
+  buyingPower: unknown;
+}): OrderInfo {
+  const ob = unwrap(params.orderbook);
+  const bp = unwrap(params.buyingPower);
+  const asks = (Array.isArray(ob.asks) ? ob.asks : []) as Array<{ price?: Money }>;
+  const bids = (Array.isArray(ob.bids) ? ob.bids : []) as Array<{ price?: Money }>;
+  const currency =
+    typeof ob.currency === "string"
+      ? ob.currency
+      : typeof bp.currency === "string"
+        ? bp.currency
+        : "KRW";
   return {
-    symbol,
+    symbol: params.symbol,
     side: "BUY",
-    lastPrice: toNumber(r.lastPrice as Money),
-    buyableAmount: pickAmount(r.buyableAmount, currency),
-    commissionRate: r.commissionRate != null ? toNumber(r.commissionRate as Money) : undefined,
+    lastPrice: toNumber(asks[0]?.price ?? bids[0]?.price),
+    buyableAmount: toNumber(bp.cashBuyingPower as Money),
     currency,
   };
 }

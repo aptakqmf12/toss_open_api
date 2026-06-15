@@ -1,6 +1,6 @@
 import "server-only";
 import type { PortfolioSummary, HoldingItem, ExchangeRate, OrderInfo } from "./types";
-import { normalizeOrderInfo } from "./orders";
+import { buildOrderInfo } from "./orders";
 
 // ─────────────────────────────────────────────────────────────
 // 토스증권 Open API 연동 레이어 (서버 전용)
@@ -300,15 +300,29 @@ function maskAccountNo(accountNo: string): string {
 }
 
 // ── 주문 전 조회 ─────────────────────────────────────────────
+// 토스에는 단일 order-info 엔드포인트가 없다. 시장가 매수에 필요한 정보를 두 곳에서 모은다.
+//   1) 호가(orderbook): 통화 + 시장가 기준가(최우선 매도호가)
+//   2) 매수가능금액(buying-power): 통화별 현금 매수가능금액
 export async function getOrderInfo(symbol: string): Promise<OrderInfo> {
   const accounts = await getAccounts();
   const account = resolveAccount(accounts);
-  const data = await authedFetch(
-    `/api/v1/order-info?symbol=${encodeURIComponent(symbol)}&side=BUY`,
+
+  // 호가는 계좌 헤더 불필요(symbol 쿼리만). 통화와 기준가를 여기서 얻는다.
+  const orderbook = await authedFetch(
+    `/api/v1/orderbook?symbol=${encodeURIComponent(symbol)}`,
+  );
+  const obCurrency =
+    (orderbook as { result?: { currency?: string }; currency?: string })?.result?.currency ??
+    (orderbook as { currency?: string })?.currency ??
+    "KRW";
+
+  // 매수가능금액은 통화 쿼리 + 계좌 헤더 필수.
+  const buyingPower = await authedFetch(
+    `/api/v1/buying-power?currency=${encodeURIComponent(obCurrency)}`,
     { accountSeq: account.accountSeq },
   );
-  return normalizeOrderInfo(data, symbol);
-  // ⚠️ probe 결과 order-info 에 현재가가 없으면 holdings 의 lastPrice 로 보강한다.
+
+  return buildOrderInfo({ symbol, orderbook, buyingPower });
 }
 
 // ── 시장가 매수 주문 전송 ────────────────────────────────────

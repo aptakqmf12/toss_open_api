@@ -5,7 +5,7 @@ import {
   checkBuyLimits,
   getMaxOrderAmount,
   DEFAULT_MAX_ORDER_AMOUNT,
-  normalizeOrderInfo,
+  buildOrderInfo,
 } from "@/lib/orders";
 
 describe("parseBuyOrderInput", () => {
@@ -64,35 +64,47 @@ describe("getMaxOrderAmount", () => {
   });
 });
 
-describe("normalizeOrderInfo", () => {
-  it("스칼라 금액을 정규화한다", () => {
-    const r = normalizeOrderInfo(
-      { lastPrice: "80000", buyableAmount: "1000000", commissionRate: "0.00015", currency: "KRW" },
-      "005930",
-    );
-    expect(r).toEqual({
+describe("buildOrderInfo", () => {
+  it("호가 + 매수가능금액에서 OrderInfo 를 구성한다 (KRW, 최우선 매도호가 기준)", () => {
+    const info = buildOrderInfo({
+      symbol: "005930",
+      orderbook: {
+        result: {
+          currency: "KRW",
+          asks: [{ price: "72100", volume: "10" }],
+          bids: [{ price: "72000", volume: "5" }],
+        },
+      },
+      buyingPower: { result: { currency: "KRW", cashBuyingPower: "5000000" } },
+    });
+    expect(info).toEqual({
       symbol: "005930",
       side: "BUY",
-      lastPrice: 80000,
-      buyableAmount: 1000000,
-      commissionRate: 0.00015,
+      lastPrice: 72100,
+      buyableAmount: 5000000,
       currency: "KRW",
     });
   });
-  it("{ amount: { krw, usd } } 중첩 버킷도 흡수한다", () => {
-    const r = normalizeOrderInfo(
-      { lastPrice: "80000", buyableAmount: { amount: { krw: "1000000", usd: "0" } }, currency: "KRW" },
-      "005930",
-    );
-    expect(r.buyableAmount).toBe(1000000);
+
+  it("asks 가 비면 최우선 매수호가(bids)로 폴백한다", () => {
+    const info = buildOrderInfo({
+      symbol: "AAPL",
+      orderbook: { result: { currency: "USD", asks: [], bids: [{ price: "150.5", volume: "1" }] } },
+      buyingPower: { result: { currency: "USD", cashBuyingPower: "500" } },
+    });
+    expect(info.lastPrice).toBe(150.5);
+    expect(info.currency).toBe("USD");
+    expect(info.buyableAmount).toBe(500);
   });
-  it("{result} 래핑과 통화버킷을 흡수한다", () => {
-    const r = normalizeOrderInfo(
-      { result: { lastPrice: "150", buyableAmount: { krw: "0", usd: "500" }, currency: "USD" } },
-      "AAPL",
-    );
-    expect(r.lastPrice).toBe(150);
-    expect(r.buyableAmount).toBe(500);
-    expect(r.currency).toBe("USD");
+
+  it("envelope 없이 평평한 응답도 흡수하고, 호가 없으면 0", () => {
+    const info = buildOrderInfo({
+      symbol: "005930",
+      orderbook: { currency: "KRW", asks: [], bids: [] },
+      buyingPower: { cashBuyingPower: "0" },
+    });
+    expect(info.lastPrice).toBe(0);
+    expect(info.buyableAmount).toBe(0);
+    expect(info.currency).toBe("KRW");
   });
 });

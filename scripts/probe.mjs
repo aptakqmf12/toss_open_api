@@ -75,17 +75,26 @@ async function main() {
     "X-Tossinvest-Account": String(seq),
   });
 
-  // 4) 주문 전 조회 (첫 보유 종목 기준, side=BUY) — 조회만, 주문 아님
-  const firstSymbol =
-    (holdings.body?.result?.items ?? holdings.body?.items ?? [])[0]?.symbol;
+  // 4) 주문 전 조회 (첫 보유 종목 기준) — 조회만, 주문 아님.
+  //    토스에는 단일 order-info 가 없다. 시장가 매수에 필요한 정보를 두 곳에서 모은다:
+  //      - 호가(orderbook): 통화 + 시장가 기준가(최우선 매도호가 asks[0].price)
+  //      - 매수가능금액(buying-power): 통화별 현금 매수가능금액(cashBuyingPower)
+  const first =
+    (holdings.body?.result?.items ?? holdings.body?.items ?? [])[0];
+  const firstSymbol = first?.symbol;
+  const currency = first?.currency ?? "KRW";
   if (firstSymbol) {
     await call(
-      `/api/v1/order-info?symbol=${encodeURIComponent(firstSymbol)}&side=BUY`,
+      `/api/v1/orderbook?symbol=${encodeURIComponent(firstSymbol)}`,
+      token,
+    );
+    await call(
+      `/api/v1/buying-power?currency=${encodeURIComponent(currency)}`,
       token,
       { "X-Tossinvest-Account": String(seq) },
     );
   } else {
-    console.log("\n⚠️ 보유 종목이 없어 order-info 를 건너뜁니다.");
+    console.log("\n⚠️ 보유 종목이 없어 주문 전 조회를 건너뜁니다.");
   }
 }
 
