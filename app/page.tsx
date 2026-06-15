@@ -12,6 +12,7 @@ import {
 } from "@/lib/format";
 import AllocationChart from "./components/AllocationChart";
 import StockLogo from "./components/StockLogo";
+import BuyOrderModal from "./components/BuyOrderModal";
 
 export default function Home() {
   const [data, setData] = useState<PortfolioSummary | null>(null);
@@ -20,6 +21,8 @@ export default function Home() {
   const [needAuth, setNeedAuth] = useState(false);
   // 표시 통화 (원화/달러 토글). null 이면 환산 대상 통화(원화) 우선.
   const [displayCurrency, setDisplayCurrency] = useState<string | null>(null);
+  // 매수 모달 대상 종목 (null 이면 닫힘)
+  const [buyTarget, setBuyTarget] = useState<HoldingItem | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -182,7 +185,13 @@ export default function Home() {
               {/* 모바일: 카드 리스트 (가로 잘림 방지) */}
               <div className="space-y-3 md:hidden">
                 {data.items.map((it) => (
-                  <HoldingCard key={it.symbol} it={it} cur={cur} conv={conv} />
+                  <HoldingCard
+                    key={it.symbol}
+                    it={it}
+                    cur={cur}
+                    conv={conv}
+                    onBuy={() => setBuyTarget(it)}
+                  />
                 ))}
               </div>
 
@@ -198,6 +207,7 @@ export default function Home() {
                       <th className="py-2 font-medium">평가금액</th>
                       <th className="py-2 font-medium">손익</th>
                       <th className="py-2 font-medium">비중</th>
+                      <th className="py-2 font-medium"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -237,6 +247,14 @@ export default function Home() {
                         <td className="tabular-nums text-gray-300">
                           {it.weight.toFixed(1)}%
                         </td>
+                        <td className="py-3 text-right">
+                          <button
+                            onClick={() => setBuyTarget(it)}
+                            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium transition hover:bg-blue-500"
+                          >
+                            매수
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -246,6 +264,14 @@ export default function Home() {
           </>
         )}
       </div>
+      {buyTarget && (
+        <BuyOrderModal
+          symbol={buyTarget.symbol}
+          name={buyTarget.name}
+          onClose={() => setBuyTarget(null)}
+          onDone={load}
+        />
+      )}
     </main>
   );
 }
@@ -254,10 +280,12 @@ function HoldingCard({
   it,
   cur,
   conv,
+  onBuy,
 }: {
   it: HoldingItem;
   cur: string;
   conv: (v: number) => number;
+  onBuy: () => void;
 }) {
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/80 p-4">
@@ -287,6 +315,12 @@ function HoldingCard({
         />
         <Field label="현재가" value={formatCurrency(conv(it.lastPrice), cur)} />
       </div>
+      <button
+        onClick={onBuy}
+        className="mt-3 w-full rounded-lg bg-blue-600 py-2 text-sm font-medium transition hover:bg-blue-500"
+      >
+        매수
+      </button>
     </div>
   );
 }
